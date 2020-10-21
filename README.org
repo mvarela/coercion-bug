@@ -1,0 +1,124 @@
+#+TITLE: Issue with Malli coercion in Reitit
+
+* Problem:
+When defining a response body as ~[:sequence string?]~, coercion fails when the
+response is an empty vector, despite the fact that ~(malli/validate [:sequence string?] [])~ is ~true~.
+A minimal reproduction:
+
+#+begin_src clojure :exports code
+
+(def routes [["/swagger.json"
+              {:get {:no-doc true
+                     :swagger {:info {:title "my-api"
+                                      :description "with reitit-http"}}
+                     :handler (swagger/create-swagger-handler)}}]
+             ["/ping" {:get {:summary "ping"
+                             :parameters {}
+                             :responses {200 {:body [:sequential string?]}}
+                             :handler (fn [ctx] (->ok []))}}]
+
+             ["/ping2" {:get {:summary "ping2"
+                             :parameters {}
+                             :responses {200 {:body [:sequential string?]}}
+                             :handler (fn [ctx] (->ok ["some string"]))}}]])
+
+(def routes-data {
+                  :reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
+                  ;;:validate spec/validate ;; enable spec validation for route data
+                  ;;:reitit.spec/wrap spell/closed ;; strict top-level validation
+                  :exception pretty/exception
+                  :data {:coercion reitit.coercion.malli/coercion
+                         :muuntaja m/instance
+                         :interceptors [ ;; swagger feature
+                                        swagger/swagger-feature
+                                        ;; query-params & form-params
+                                        (parameters/parameters-interceptor)
+                                        ;; content-negotiation
+                                        (muuntaja/format-negotiate-interceptor)
+                                        ;; encoding response body
+                                        (muuntaja/format-response-interceptor)
+                                        ;; exception handling
+                                        (exception/exception-interceptor)
+                                        ;; decoding request body
+                                        (muuntaja/format-request-interceptor)
+                                        ;; coercing response bodys
+                                        (coercion/coerce-response-interceptor)
+                                        ;; coercing request parameters
+                                        (coercion/coerce-request-interceptor)]}})
+
+(def app (http/ring-handler
+           (http/router routes  routes-data)
+           (ring/routes
+            (swagger-ui/create-swagger-ui-handler
+             {:path "/"
+              :config {:validatorUrl nil
+                       :operationsSorter "alpha"}})
+            (ring/create-default-handler))
+           {:executor sieppari/executor}))
+#+end_src
+
+[[./screens/malli/Screenshot-2020-10-21T14:24:55+03:00.png]]
+
+[[./screens/malli/Screenshot-2020-10-21T14:25:09+03:00.png]]
+
+
+This works ok when using spec, however:
+
+#+begin_src clojure :exports code
+
+(def routes [["/swagger.json"
+              {:get {:no-doc true
+                     :swagger {:info {:title "my-api"
+                                      :description "with reitit-http"}}
+                     :handler (swagger/create-swagger-handler)}}]
+             ["/ping" {:get {:summary "ping"
+                             :parameters {}
+                             :responses {200 {:body (spec/coll-of string?)}}
+                             :handler (fn [ctx] (->ok []))}}]
+
+             ["/ping2" {:get {:summary "ping2"
+                             :parameters {}
+                             :responses {200 {:body (spec/coll-of string?)}}
+                             :handler (fn [ctx] (->ok ["some string"]))}}]])
+
+(def routes-data {:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
+       ;;:validate spec/validate ;; enable spec validation for route data
+       ;;:reitit.spec/wrap spell/closed ;; strict top-level validation
+       :exception pretty/exception
+       :data {:coercion reitit.coercion.spec/coercion
+              :muuntaja m/instance
+              :interceptors [ ;; swagger feature
+                             swagger/swagger-feature
+                             ;; query-params & form-params
+                             (parameters/parameters-interceptor)
+                             ;; content-negotiation
+                             (muuntaja/format-negotiate-interceptor)
+                             ;; encoding response body
+                             (muuntaja/format-response-interceptor)
+                             ;; exception handling
+                             (exception/exception-interceptor)
+                             ;; decoding request body
+                             (muuntaja/format-request-interceptor)
+                             ;; coercing response bodys
+                             (coercion/coerce-response-interceptor)
+                             ;; coercing request parameters
+                             (coercion/coerce-request-interceptor)]}})
+
+(def app (http/ring-handler
+           (http/router routes  routes-data)
+           (ring/routes
+            (swagger-ui/create-swagger-ui-handler
+             {:path "/"
+              :config {:validatorUrl nil
+                       :operationsSorter "alpha"}})
+            (ring/create-default-handler))
+           {:executor sieppari/executor}))
+
+#+end_src
+
+The [[./trace.txt][trace.txt]] file contains a diff-trace of the failing call.
+
+* Reproducing:
+
+Load both the ~bug~ and ~working~ namespaces, they start servers on
+[[http://localhost:3001]] and [[http://localhost:3002]], respectively.
