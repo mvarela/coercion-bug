@@ -1,8 +1,8 @@
 #+TITLE: Issue with Malli coercion in Reitit
 
 * Problem:
-When defining a response body as ~[:sequence string?]~, coercion fails when the
-response is an empty vector, despite the fact that ~(malli/validate [:sequence string?] [])~ is ~true~.
+When defining a response body as ~[:sequential string?]~, coercion fails when the
+response is an empty vector, despite the fact that ~(malli/validate [:sequential string?] [])~ is ~true~.
 A minimal reproduction:
 
 #+begin_src clojure :exports code
